@@ -161,6 +161,38 @@ fi
 
 echo "CHANGELOG update result: $?"
 
+# Update README version badge
+echo "Updating README version badge..."
+README_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="README.md" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
+GITHUB_README=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="README.md" 2>/dev/null || echo "")
+
+if [ -n "$GITHUB_README" ]; then
+    # Update version badge in README
+    UPDATED_README=$(echo "$GITHUB_README" | sed "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/version-${NEW_VERSION}-blue/g")
+
+    if [ -n "$README_SHA" ]; then
+        docker mcp tools call create_or_update_file \
+            owner=$OWNER \
+            repo=$REPO \
+            branch=$BRANCH \
+            path="README.md" \
+            message="Update version badge to ${NEW_VERSION}" \
+            content="$UPDATED_README" \
+            sha="$README_SHA"
+    else
+        docker mcp tools call create_or_update_file \
+            owner=$OWNER \
+            repo=$REPO \
+            branch=$BRANCH \
+            path="README.md" \
+            message="Update version badge to ${NEW_VERSION}" \
+            content="$UPDATED_README"
+    fi
+    echo "README version badge updated to $NEW_VERSION"
+else
+    echo "README not found on GitHub, skipping version update"
+fi
+
 # Clean up temporary files
 rm -f NEW_CHANGELOG.md
 
