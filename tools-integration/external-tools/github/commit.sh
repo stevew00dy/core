@@ -1,6 +1,7 @@
 #!/bin/bash
 # commit.sh - Automated version bump and commit script
 # Usage: ./commit.sh [patch|minor|major]
+# Pushes directly to GitHub without modifying local files
 
 set -e
 
@@ -11,13 +12,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🚀 Starting automated commit process...${NC}"
+echo -e "${BLUE}🚀 Starting automated GitHub commit process...${NC}"
 
-# Check if we're in the right directory
-if [ ! -f "VERSION" ] || [ ! -f "CHANGELOG.md" ]; then
-    echo -e "${RED}❌ ERROR: VERSION or CHANGELOG.md not found. Run from project root.${NC}"
-    exit 1
-fi
+# Repository configuration
+OWNER="stevew00dy"
+REPO="core"
+BRANCH="main"
 
 # Get bump type from argument or prompt
 BUMP_TYPE=${1:-}
@@ -36,9 +36,12 @@ if [ -z "$BUMP_TYPE" ]; then
     esac
 fi
 
-# Current version
-CURRENT_VERSION=$(cat VERSION 2>/dev/null || echo "0.0.0")
-echo -e "${BLUE}Current version: ${CURRENT_VERSION}${NC}"
+# Get current version from GitHub
+echo -e "${BLUE}📡 Getting current version from GitHub...${NC}"
+GITHUB_VERSION_CONTENT=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="VERSION" 2>/dev/null)
+CURRENT_VERSION=$(echo "$GITHUB_VERSION_CONTENT" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || echo "1.0.1")
+
+echo -e "${BLUE}Current GitHub version: ${CURRENT_VERSION}${NC}"
 
 # Calculate new version
 case $BUMP_TYPE in
@@ -59,30 +62,26 @@ esac
 
 echo -e "${GREEN}New version: ${NEW_VERSION}${NC}"
 
-# Update VERSION file
-echo $NEW_VERSION > VERSION
-echo -e "${GREEN}✅ Updated VERSION file${NC}"
-
-# Get recent changes for changelog
-echo -e "${BLUE}📝 Gathering recent changes...${NC}"
-RECENT_COMMITS=$(git log --oneline HEAD~3..HEAD 2>/dev/null || echo "- Initial changes")
-MODIFIED_FILES=$(git diff --name-only HEAD~3..HEAD 2>/dev/null || git ls-files | head -10)
-
 # Get current date
 DATE=$(date '+%Y-%m-%d')
 
 # Prompt for changelog description
-echo -e "${YELLOW}Enter a brief description of changes (or press Enter to use auto-generated):${NC}"
+echo -e "${YELLOW}Enter a brief description of changes:${NC}"
 read -p "> " USER_DESCRIPTION
 
-if [ -n "$USER_DESCRIPTION" ]; then
-    CHANGELOG_ENTRY="- $USER_DESCRIPTION"
-else
-    CHANGELOG_ENTRY=$(echo "$RECENT_COMMITS" | sed 's/^[a-f0-9]* /- /')
+if [ -z "$USER_DESCRIPTION" ]; then
+    USER_DESCRIPTION="Version bump and maintenance updates"
 fi
 
-# Update CHANGELOG.md
-cat > CHANGELOG_TEMP.md << EOF
+# Get recent local changes for reference
+RECENT_CHANGES=$(git status --porcelain 2>/dev/null | head -5 | awk '{print "- " $2}' || echo "- General updates")
+
+# Get current CHANGELOG from GitHub
+echo -e "${BLUE}📡 Getting current CHANGELOG from GitHub...${NC}"
+GITHUB_CHANGELOG=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="CHANGELOG.md" 2>/dev/null || echo "")
+
+# Prepare new CHANGELOG content
+cat > NEW_CHANGELOG.md << EOF
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -93,78 +92,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [${NEW_VERSION}] - ${DATE}
 
 ### Changes
-${CHANGELOG_ENTRY}
+- ${USER_DESCRIPTION}
 
-### Files Modified
-$(echo "$MODIFIED_FILES" | sed 's/^/- /')
+### Modified
+${RECENT_CHANGES}
 
 EOF
 
-# Append existing changelog (skip first 6 lines of old changelog)
-if [ -f CHANGELOG.md ] && [ $(wc -l < CHANGELOG.md) -gt 6 ]; then
-    echo "" >> CHANGELOG_TEMP.md
-    tail -n +7 CHANGELOG.md >> CHANGELOG_TEMP.md
+# Append existing changelog content (skip header if it exists)
+if [ -n "$GITHUB_CHANGELOG" ]; then
+    echo "" >> NEW_CHANGELOG.md
+    echo "$GITHUB_CHANGELOG" | tail -n +7 >> NEW_CHANGELOG.md
 fi
 
-mv CHANGELOG_TEMP.md CHANGELOG.md
-echo -e "${GREEN}✅ Updated CHANGELOG.md${NC}"
+echo -e "${GREEN}✅ Prepared new version files${NC}"
 
-# Check README for version references
-echo -e "${BLUE}🔍 Checking README for version updates...${NC}"
-if grep -q "$CURRENT_VERSION" README.md 2>/dev/null; then
-    echo -e "${YELLOW}⚠️  README contains old version references. Consider updating manually.${NC}"
-    echo "Old version found: $CURRENT_VERSION"
-fi
+# Commit to GitHub via MCP
+echo -e "${BLUE}📤 Committing to GitHub...${NC}"
 
-# Commit via MCP
-echo -e "${BLUE}📤 Committing to GitHub via MCP...${NC}"
+# Get current SHAs
+echo "Getting current file SHAs from GitHub..."
+VERSION_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="VERSION" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
+CHANGELOG_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="CHANGELOG.md" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
 
-# Get current SHAs for existing files
-echo "Getting current file SHAs..."
-VERSION_SHA=$(docker mcp tools call get_file_contents owner=stevew00dy repo=core path="VERSION" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')')
-CHANGELOG_SHA=$(docker mcp tools call get_file_contents owner=stevew00dy repo=core path="CHANGELOG.md" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')')
-
-# Commit VERSION file
-echo "Committing VERSION file..."
+# Commit VERSION file to GitHub
+echo "Pushing VERSION to GitHub..."
 if [ -n "$VERSION_SHA" ]; then
     docker mcp tools call create_or_update_file \
-        owner=stevew00dy \
-        repo=core \
-        branch=main \
+        owner=$OWNER \
+        repo=$REPO \
+        branch=$BRANCH \
         path="VERSION" \
         message="Bump version to ${NEW_VERSION}" \
-        content="$(cat VERSION)" \
+        content="$NEW_VERSION" \
         sha="$VERSION_SHA"
 else
     docker mcp tools call create_or_update_file \
-        owner=stevew00dy \
-        repo=core \
-        branch=main \
+        owner=$OWNER \
+        repo=$REPO \
+        branch=$BRANCH \
         path="VERSION" \
         message="Bump version to ${NEW_VERSION}" \
-        content="$(cat VERSION)"
+        content="$NEW_VERSION"
 fi
 
-# Commit CHANGELOG file
-echo "Committing CHANGELOG file..."
+echo "VERSION update result: $?"
+
+# Commit CHANGELOG file to GitHub
+echo "Pushing CHANGELOG to GitHub..."
 if [ -n "$CHANGELOG_SHA" ]; then
     docker mcp tools call create_or_update_file \
-        owner=stevew00dy \
-        repo=core \
-        branch=main \
+        owner=$OWNER \
+        repo=$REPO \
+        branch=$BRANCH \
         path="CHANGELOG.md" \
         message="Update changelog for version ${NEW_VERSION}" \
-        content="$(cat CHANGELOG.md)" \
+        content="$(cat NEW_CHANGELOG.md)" \
         sha="$CHANGELOG_SHA"
 else
     docker mcp tools call create_or_update_file \
-        owner=stevew00dy \
-        repo=core \
-        branch=main \
+        owner=$OWNER \
+        repo=$REPO \
+        branch=$BRANCH \
         path="CHANGELOG.md" \
         message="Update changelog for version ${NEW_VERSION}" \
-        content="$(cat CHANGELOG.md)"
+        content="$(cat NEW_CHANGELOG.md)"
 fi
+
+echo "CHANGELOG update result: $?"
+
+# Clean up temporary files
+rm -f NEW_CHANGELOG.md
 
 echo -e "${GREEN}🎉 Release ${NEW_VERSION} completed successfully!${NC}"
 echo ""
