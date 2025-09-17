@@ -1,5 +1,9 @@
 # Multi-Agent AGI System
 
+![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)
+![Status](https://img.shields.io/badge/status-active-green.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
 A comprehensive, enterprise-grade AI development environment that orchestrates multiple AI agents for collaborative problem-solving, code generation, and system management. This system replaces traditional development tools with an intelligent, self-improving platform that learns and adapts to user patterns while maintaining enterprise-level security and reliability.
 
 ## System Overview
