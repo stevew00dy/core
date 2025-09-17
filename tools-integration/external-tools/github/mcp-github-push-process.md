@@ -1,174 +1,121 @@
-# MCP GitHub Push Process Documentation
+# Docker MCP GitHub Integration Guide
 
-## Overview
-This document outlines the process used to push all Core folders and files to GitHub using the Docker MCP Toolkit gateway, bypassing traditional git authentication issues.
+## Setup Requirements
 
-## Prerequisites
-1. **MCP Gateway Running**: Docker MCP gateway must be running with GitHub tools
-   ```bash
-   docker mcp gateway run
-   ```
-
-2. **GitHub Personal Access Token**: Configured in MCP secrets for authentication
-   - Token should have repository permissions
-   - Stored securely in MCP configuration
-
-## Process Steps
-
-### 1. Initial Assessment
-- Check local directory structure with `ls -la`
-- Verify git repository status with `git status`
-- Check existing remote configuration with `git remote -v`
-- Fetch remote references with `git fetch origin`
-
-### 2. Identify Available MCP Tools
+### 1. Start MCP Gateway
 ```bash
-docker mcp tools list
-```
-Key tools used:
-- `create_or_update_file`: Create or update individual files
-- `get_file_contents`: Check existing repository contents
-- `list_branches`: Verify repository structure
-
-### 3. Repository Content Analysis
-```bash
-docker mcp tools call get_file_contents owner=stevew00dy repo=core path="/"
-```
-This reveals what's already in the GitHub repository vs. local files.
-
-### 4. File Upload Strategy
-Since traditional `git push` failed due to authentication issues, we used the MCP GitHub API tools to upload files individually:
-
-#### For Existing Key Files:
-```bash
-docker mcp tools call create_or_update_file owner=stevew00dy repo=core branch=main path="documentation/research-paper.md" message="Add documentation folder with research paper" content="$(cat documentation/research-paper.md)"
+docker mcp gateway run
 ```
 
-#### For Creating Directory Structure:
-Create placeholder README files in each major directory:
-```bash
-docker mcp tools call create_or_update_file owner=stevew00dy repo=core branch=main path="administration/README.md" message="Add administration module structure" content="# Administration Module..."
-```
+### 2. GitHub Personal Access Token
+- Token with repository permissions required
+- Must be configured in MCP secrets
 
-### 5. Systematic Upload Process
-Uploaded files/folders in this order:
-1. **documentation/** - research-paper.md, final-overview.md
-2. **memory-core/** - README.md
-3. **ide-interface/** - package.json
-4. **administration/** - README.md (placeholder)
-5. **analytics-reports/** - README.md (placeholder)
-6. **configuration/** - README.md (placeholder)
-7. **human-review/** - README.md (placeholder)
-8. **monitoring-observability/** - README.md (placeholder)
-9. **security-safety/** - README.md (placeholder)
-10. **workflows-automation/** - README.md (placeholder)
+## Essential Commands
 
-### 6. Verification
-Final verification with:
-```bash
-docker mcp tools call get_file_contents owner=stevew00dy repo=core path="/"
-```
-
-## Key Commands Used
-
-### List MCP Tools
+### List Available Tools
 ```bash
 docker mcp tools list
 ```
 
-### Upload Single File
-```bash
-docker mcp tools call create_or_update_file owner=USERNAME repo=REPO branch=main path="FILEPATH" message="COMMIT_MESSAGE" content="$(cat LOCALFILE)"
-```
-
-### Check Repository Contents
+### Check Repository Structure
 ```bash
 docker mcp tools call get_file_contents owner=USERNAME repo=REPO path="/"
 ```
 
-### Get File Contents from GitHub
+### Create/Update Files (Commit)
+```bash
+docker mcp tools call create_or_update_file owner=USERNAME repo=REPO branch=BRANCH path="FILEPATH" message="COMMIT_MESSAGE" content="$(cat LOCALFILE)"
+```
+
+### Delete Files
+```bash
+docker mcp tools call delete_file owner=USERNAME repo=REPO branch=BRANCH path="FILEPATH" message="COMMIT_MESSAGE"
+```
+
+### Get File Contents
 ```bash
 docker mcp tools call get_file_contents owner=USERNAME repo=REPO path="FILEPATH"
 ```
 
-## Advantages of MCP Approach
-
-1. **Authentication**: Bypasses local git credential issues
-2. **Granular Control**: Upload specific files without full repository sync
-3. **API Integration**: Direct GitHub API access through MCP tools
-4. **Selective Upload**: Can choose exactly which files to upload
-5. **Immediate Feedback**: Get commit SHAs and URLs for each upload
-
-## Limitations
-
-1. **File Size**: Large files may hit GitHub API limits
-2. **Binary Files**: Text files work best, binary files may need special handling
-3. **Batch Operations**: No native bulk upload, requires individual file uploads
-4. **History**: Creates individual commits per file rather than single batch commit
-
-## Future Improvements
-
-1. **Bulk Upload Script**: Create script to batch multiple file uploads
-2. **Directory Sync**: Implement recursive directory synchronization
-3. **Conflict Resolution**: Add logic to handle file conflicts
-4. **Progress Tracking**: Better progress indication for large uploads
-
-## Troubleshooting
-
-### Common Issues
-1. **Missing SHA Error**: File exists on GitHub but SHA not provided
-   - Solution: Get current file SHA with `get_file_contents` first
-
-2. **Authentication Failed**: MCP gateway not properly configured
-   - Solution: Verify GitHub token in MCP secrets
-
-3. **Invalid Branch**: Branch doesn't exist
-   - Solution: Use `list_branches` to verify available branches
-
-### Error Examples
+### List Branches
+```bash
+docker mcp tools call list_branches owner=USERNAME repo=REPO
 ```
-error calling tool create_or_update_file: missing required parameter: branch
-```
-- Always include `branch=main` parameter
 
+## Key GitHub MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `create_or_update_file` | Commit files to repository |
+| `delete_file` | Remove files from repository |
+| `get_file_contents` | Read repository files/structure |
+| `list_branches` | View available branches |
+| `create_branch` | Create new branches |
+| `create_pull_request` | Create pull requests |
+| `merge_pull_request` | Merge pull requests |
+
+## Required Parameters
+
+### For create_or_update_file:
+- `owner` - GitHub username
+- `repo` - Repository name
+- `branch` - Target branch (e.g., "main")
+- `path` - File path in repository
+- `message` - Commit message
+- `content` - File content
+- `sha` - Current file SHA (for updates only)
+
+## Common Workflows
+
+### 1. Commit Single File
+```bash
+# Upload new file
+docker mcp tools call create_or_update_file owner=myuser repo=myrepo branch=main path="src/file.js" message="Add new feature" content="$(cat src/file.js)"
+```
+
+### 2. Update Existing File
+```bash
+# Get current SHA first
+docker mcp tools call get_file_contents owner=myuser repo=myrepo path="src/file.js"
+
+# Update with SHA
+docker mcp tools call create_or_update_file owner=myuser repo=myrepo branch=main path="src/file.js" message="Update feature" content="$(cat src/file.js)" sha="CURRENT_SHA"
+```
+
+### 3. Batch Upload Multiple Files
+```bash
+# Loop through files
+for file in src/*.js; do
+  docker mcp tools call create_or_update_file owner=myuser repo=myrepo branch=main path="$file" message="Upload $file" content="$(cat $file)"
+done
+```
+
+## Error Handling
+
+### Missing SHA Error
 ```
 "sha" wasn't supplied. []
 ```
-- File exists on GitHub, need to provide current SHA for updates
+**Solution**: Get file SHA first with `get_file_contents`
 
-## Repository Structure Created
+### Missing Branch Parameter
 ```
-stevew00dy/core/
-├── CLAUDE.md
-├── README.md
-├── administration/
-├── agent-management/
-├── analytics-reports/
-├── code-generation/
-├── configuration/
-├── dashboard/
-├── documentation/
-├── human-review/
-├── ide-interface/
-├── memory-core/
-├── memory-knowledge/
-├── monitoring-observability/
-├── security-safety/
-├── tools-integration/
-└── workflows-automation/
+error calling tool create_or_update_file: missing required parameter: branch
 ```
+**Solution**: Always include `branch=main` parameter
 
-## Success Metrics
-- ✅ All 15 local directories represented on GitHub
-- ✅ Key documentation files uploaded (research-paper.md, final-overview.md)
-- ✅ Configuration files uploaded (package.json)
-- ✅ Directory structure maintained with README placeholders
-- ✅ Repository accessible at https://github.com/stevew00dy/core
+### Authentication Failed
+**Solution**: Verify GitHub token in MCP configuration
 
-## Date Completed
-September 17, 2025
+## File Size Limits
+- Text files: Generally no issues
+- Binary files: May need special handling
+- Large files (>100MB): Use Git LFS or split files
 
-## Tools Used
-- Docker MCP Toolkit
-- GitHub MCP Server (93 tools available)
-- Claude Code with TodoWrite task management
+## Best Practices
+1. Always check repository structure first
+2. Use descriptive commit messages
+3. Verify changes with `get_file_contents` after commits
+4. Handle authentication tokens securely
+5. Use appropriate branch names
