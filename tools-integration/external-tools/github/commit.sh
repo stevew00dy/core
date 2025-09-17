@@ -38,8 +38,27 @@ fi
 
 # Get current version from GitHub
 echo -e "${BLUE}📡 Getting current version from GitHub...${NC}"
-GITHUB_VERSION_CONTENT=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="VERSION" 2>/dev/null)
-CURRENT_VERSION=$(echo "$GITHUB_VERSION_CONTENT" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || echo "1.0.1")
+
+# Get the latest commit messages to find version information
+RECENT_COMMITS=$(docker mcp tools call list_commits owner=$OWNER repo=$REPO 2>/dev/null)
+
+# Look for version bump commits in recent history
+CURRENT_VERSION=""
+if [ -n "$RECENT_COMMITS" ]; then
+    # Extract version from commit messages like "Bump version to 1.0.2"
+    CURRENT_VERSION=$(echo "$RECENT_COMMITS" | grep -o 'version to [0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 | awk '{print $3}')
+
+    # Also check for "Update changelog for version X.Y.Z"
+    if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        CURRENT_VERSION=$(echo "$RECENT_COMMITS" | grep -o 'version [0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 | awk '{print $2}')
+    fi
+fi
+
+# Final fallback - use default version
+if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    CURRENT_VERSION="1.0.1"
+    echo -e "${YELLOW}⚠️  Could not determine version from GitHub, using: ${CURRENT_VERSION}${NC}"
+fi
 
 echo -e "${BLUE}Current GitHub version: ${CURRENT_VERSION}${NC}"
 
@@ -110,10 +129,19 @@ echo -e "${GREEN}✅ Prepared new version files${NC}"
 # Commit to GitHub via MCP
 echo -e "${BLUE}📤 Committing to GitHub...${NC}"
 
-# Get current SHAs
+# Get current SHAs from GitHub properly
 echo "Getting current file SHAs from GitHub..."
-VERSION_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="VERSION" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
-CHANGELOG_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="CHANGELOG.md" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
+
+# Get VERSION file SHA
+VERSION_SHA_OUTPUT=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="VERSION" 2>/dev/null)
+VERSION_SHA=$(echo "$VERSION_SHA_OUTPUT" | grep -o 'SHA: [a-f0-9]\+' | cut -d' ' -f2)
+
+# Get CHANGELOG file SHA
+CHANGELOG_SHA_OUTPUT=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="CHANGELOG.md" 2>/dev/null)
+CHANGELOG_SHA=$(echo "$CHANGELOG_SHA_OUTPUT" | grep -o 'SHA: [a-f0-9]\+' | cut -d' ' -f2)
+
+echo "VERSION SHA: $VERSION_SHA"
+echo "CHANGELOG SHA: $CHANGELOG_SHA"
 
 # Commit VERSION file to GitHub
 echo "Pushing VERSION to GitHub..."
@@ -163,34 +191,39 @@ echo "CHANGELOG update result: $?"
 
 # Update README version badge
 echo "Updating README version badge..."
-README_SHA=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="README.md" 2>/dev/null | grep "SHA:" | awk '{print $2}' | tr -d ')' || echo "")
-GITHUB_README=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="README.md" 2>/dev/null || echo "")
 
-if [ -n "$GITHUB_README" ]; then
-    # Update version badge in README
-    UPDATED_README=$(echo "$GITHUB_README" | sed "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/version-${NEW_VERSION}-blue/g")
+# Get README SHA using the same method as other files
+README_SHA_OUTPUT=$(docker mcp tools call get_file_contents owner=$OWNER repo=$REPO path="README.md" 2>/dev/null)
+README_SHA=$(echo "$README_SHA_OUTPUT" | grep -o 'SHA: [a-f0-9]\+' | cut -d' ' -f2)
 
-    if [ -n "$README_SHA" ]; then
+echo "README SHA: $README_SHA"
+
+if [ -n "$README_SHA" ]; then
+    echo "Updating README version badge from ${CURRENT_VERSION} to ${NEW_VERSION}..."
+
+    # Since parsing MCP output is complex, let's use the current local README as base
+    # and just update the version badge
+    if [ -f "README.md" ]; then
+        # Update the local README version badge
+        UPDATED_README_CONTENT=$(sed "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/version-${NEW_VERSION}-blue/g" README.md)
+
+        echo "Pushing updated README to GitHub..."
+
         docker mcp tools call create_or_update_file \
             owner=$OWNER \
             repo=$REPO \
             branch=$BRANCH \
             path="README.md" \
             message="Update version badge to ${NEW_VERSION}" \
-            content="$UPDATED_README" \
+            content="$UPDATED_README_CONTENT" \
             sha="$README_SHA"
+
+        echo "✅ README version badge updated to ${NEW_VERSION}"
     else
-        docker mcp tools call create_or_update_file \
-            owner=$OWNER \
-            repo=$REPO \
-            branch=$BRANCH \
-            path="README.md" \
-            message="Update version badge to ${NEW_VERSION}" \
-            content="$UPDATED_README"
+        echo "⚠️ Local README.md not found, skipping badge update"
     fi
-    echo "README version badge updated to $NEW_VERSION"
 else
-    echo "README not found on GitHub, skipping version update"
+    echo "Could not get README SHA for version badge update"
 fi
 
 # Clean up temporary files
